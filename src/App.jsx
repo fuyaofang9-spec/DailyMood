@@ -89,30 +89,72 @@ const DEFAULT_PROFILE = {
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 async function callClaude(messages, max_tokens=1200) {
-  // Use /api/claude proxy to avoid CORS when deployed on Vercel
-  const endpoint = typeof window !== "undefined" && window.location.hostname !== "localhost"
-    ? "/api/claude"
-    : "https://api.anthropic.com/v1/messages";
-
-  const headers = {"Content-Type":"application/json"};
-
-  const res = await fetch(endpoint, {
+  const res = await fetch("/api/claude", {
     method:"POST",
-    headers,
+    headers:{"Content-Type":"application/json"},
     body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens,messages}),
   });
-  if(!res.ok) throw new Error(`Claude API ${res.status}`);
+  if(!res.ok) {
+    const err = await res.json().catch(()=>({}));
+    throw new Error(`Claude API ${res.status}: ${err.error?.message || JSON.stringify(err)}`);
+  }
   const j = await res.json();
   return (j.content||[]).map(b=>b.text||"").join("").trim();
 }
 
-async function parseImageWithAI(base64, mimeType) {
+// Compress image to JPEG under 1MB before sending to API
+async function compressImage(file, maxSizeKB=900) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement("canvas");
+      let {width, height} = img;
+      // Scale down if too large
+      const maxDim = 1200;
+      if (width > maxDim || height > maxDim) {
+        const ratio = Math.min(maxDim/width, maxDim/height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      // Try quality 0.85 first, then reduce if needed
+      let quality = 0.85;
+      const tryCompress = () => {
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        const base64 = dataUrl.split(",")[1];
+        const sizeKB = (base64.length * 3/4) / 1024;
+        if (sizeKB > maxSizeKB && quality > 0.3) {
+          quality -= 0.15;
+          tryCompress();
+        } else {
+          resolve({ base64, mimeType: "image/jpeg" });
+        }
+      };
+      tryCompress();
+    };
+    img.onerror = () => {
+      // fallback: read raw
+      const reader = new FileReader();
+      reader.onload = () => resolve({ base64: reader.result.split(",")[1], mimeType: file.type || "image/jpeg" });
+      reader.readAsDataURL(file);
+    };
+    img.src = url;
+  });
+}
+
+async function parseImageWithAI(file) {
+  const { base64, mimeType } = await compressImage(file);
   const text = await callClaude([{role:"user",content:[
     {type:"image",source:{type:"base64",media_type:mimeType,data:base64}},
     {type:"text",text:`分析这张测测APP截图，提取所有幸运元素。只返回JSON，无其他文字：
 {"mood":"运势描述","advice":"建议","avoid":"避免","luckyColor":"颜色名","luckyColorHex":"#hex","luckyJewelry":"配饰名","luckyJewelryHex":"#hex","luckyTime":"17-19点","luckyDirection":"正西","luckyNumbers":"1,2","luckyFood":"食物","luckyItem":"随身物","luckyFlower":"花名"}`}
   ]}]);
-  const clean = text.replace(/^```[a-z]*\n?/i,"").replace(/```$/,"").trim();
+  const clean = text.replace(/^```[a-z]*
+?/i,"").replace(/```$/,"").trim();
   return JSON.parse(clean);
 }
 
@@ -333,10 +375,7 @@ export default function App() {
     setPreviewUrl(URL.createObjectURL(file));
     setParseError(null); setParsing(true); setScreen("form");
     try {
-      const base64=await new Promise((res,rej)=>{
-        const r=new FileReader(); r.onload=()=>res(r.result.split(",")[1]); r.onerror=rej; r.readAsDataURL(file);
-      });
-      const parsed=await parseImageWithAI(base64,file.type||"image/jpeg");
+      const parsed=await parseImageWithAI(file);
       const nums=Array.isArray(parsed.luckyNumbers)?parsed.luckyNumbers.join(","):(parsed.luckyNumbers||"");
       setForm({
         mood:parsed.mood||"",advice:parsed.advice||"",avoid:parsed.avoid||"",
