@@ -191,26 +191,47 @@ async function geocodeAddress(address) {
   return {lat:parseFloat(j[0].lat),lon:parseFloat(j[0].lon),displayName:j[0].display_name};
 }
 
-// Overpass：搜索附近 POI
-async function searchNearby(lat, lon, type, radius=800) {
+// Overpass：搜索附近 POI，带备用镜像和扩大范围
+const OVERPASS_MIRRORS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+
+async function searchNearby(lat, lon, type) {
+  const foodRadius = 1500;
+  const walkRadius = 2000;
   let query="";
   if(type==="food") {
-    query=`[out:json][timeout:10];(node["amenity"~"restaurant|cafe|fast_food|food_court"](around:${radius},${lat},${lon}););out 8;`;
+    query=`[out:json][timeout:15];(node["amenity"~"restaurant|cafe|fast_food|food_court|bar|pub"](around:${foodRadius},${lat},${lon}););out 12;`;
   } else if(type==="walk") {
-    query=`[out:json][timeout:10];(node["leisure"~"park|garden|playground"](around:1200,${lat},${lon});way["leisure"~"park|garden"](around:1200,${lat},${lon}););out 6;`;
+    query=`[out:json][timeout:15];(node["leisure"~"park|garden|playground|nature_reserve"](around:${walkRadius},${lat},${lon});way["leisure"~"park|garden|nature_reserve"](around:${walkRadius},${lat},${lon});relation["leisure"="park"](around:${walkRadius},${lat},${lon}););out center 8;`;
   }
-  const res=await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:query});
-  const j=await res.json();
-  return (j.elements||[]).filter(e=>e.tags&&e.tags.name).map(e=>({
-    id:e.id,
-    name:e.tags.name,
-    nameEn:e.tags["name:en"]||"",
-    type:e.tags.amenity||e.tags.leisure||"",
-    lat:e.lat||(e.center&&e.center.lat)||lat,
-    lon:e.lon||(e.center&&e.center.lon)||lon,
-    cuisine:e.tags.cuisine||"",
-    opening:e.tags.opening_hours||"",
-  }));
+  // Try mirrors in sequence
+  for (const mirror of OVERPASS_MIRRORS) {
+    try {
+      const res = await fetch(mirror, {
+        method:"POST", body:query,
+        signal: AbortSignal.timeout(12000),
+      });
+      if(!res.ok) continue;
+      const j = await res.json();
+      const results = (j.elements||[]).filter(e=>e.tags&&e.tags.name).map(e=>({
+        id:e.id,
+        name:e.tags.name,
+        nameEn:e.tags["name:en"]||"",
+        type:e.tags.amenity||e.tags.leisure||"",
+        lat:e.lat||(e.center&&e.center.lat)||lat,
+        lon:e.lon||(e.center&&e.center.lon)||lon,
+        cuisine:e.tags.cuisine||"",
+        opening:e.tags.opening_hours||"",
+      }));
+      if(results.length > 0) return results;
+    } catch(e) {
+      continue;
+    }
+  }
+  return [];
 }
 
 async function generateOutfitWithAI(luckyData, weatherInfo, season, cityName) {
@@ -759,7 +780,21 @@ export default function App() {
             {!poisLoading&&foodPOIs&&foodPOIs.length>0&&foodPOIs.map(poi=>(
               <POICard key={poi.id} poi={poi} color="#FF6B35" icon="🍽"/>
             ))}
-            {!poisLoading&&foodPOIs&&foodPOIs.length===0&&<div style={{fontSize:13,color:"#BDC3C7",padding:"8px 0"}}>附近暂未找到相关餐厅</div>}
+            {!poisLoading&&foodPOIs&&foodPOIs.length===0&&(
+              <div>
+                <div style={{fontSize:13,color:"#95A5A6",marginBottom:10}}>附近暂未找到餐厅数据，可在地图上直接搜索：</div>
+                <div style={{display:"flex",gap:8",flexWrap:"wrap"}}>
+                  <a href={`https://map.baidu.com/search/${encodeURIComponent(data.luckyFood+"餐厅")}/@${activeCoords.lon},${activeCoords.lat},15z`} target="_blank" rel="noreferrer"
+                    style={{flex:1,display:"block",textAlign:"center",padding:"10px",borderRadius:12,background:"rgba(255,107,53,.12)",border:"1px solid rgba(255,107,53,.3)",color:"#FF6B35",fontWeight:700,fontSize:13,textDecoration:"none"}}>
+                    百度地图搜索 →
+                  </a>
+                  <a href={`https://uri.amap.com/search?keywords=${encodeURIComponent(data.luckyFood)}&center=${activeCoords.lon},${activeCoords.lat}&zoom=15`} target="_blank" rel="noreferrer"
+                    style={{flex:1,display:"block",textAlign:"center",padding:"10px",borderRadius:12,background:"rgba(255,107,53,.08)",border:"1px solid rgba(255,107,53,.25)",color:"#FF6B35",fontWeight:700,fontSize:13,textDecoration:"none"}}>
+                    高德地图搜索 →
+                  </a>
+                </div>
+              </div>
+            )}
             {!poisLoading&&!foodPOIs&&!activeCoords&&<div style={{fontSize:13,color:"#BDC3C7"}}>设置位置后可获取推荐</div>}
           </div>
         )}
@@ -778,7 +813,21 @@ export default function App() {
             {!poisLoading&&walkPOIs&&walkPOIs.length>0&&walkPOIs.map(poi=>(
               <POICard key={poi.id} poi={poi} color="#1ABC9C" icon="🌳"/>
             ))}
-            {!poisLoading&&walkPOIs&&walkPOIs.length===0&&<div style={{fontSize:13,color:"#BDC3C7",padding:"8px 0"}}>附近暂未找到公园或绿地</div>}
+            {!poisLoading&&walkPOIs&&walkPOIs.length===0&&(
+              <div>
+                <div style={{fontSize:13,color:"#95A5A6",marginBottom:10}}>附近暂未找到公园数据，可在地图上直接搜索：</div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <a href={`https://map.baidu.com/search/${encodeURIComponent("公园")}/@${activeCoords.lon},${activeCoords.lat},15z`} target="_blank" rel="noreferrer"
+                    style={{flex:1,display:"block",textAlign:"center",padding:"10px",borderRadius:12,background:"rgba(26,188,156,.12)",border:"1px solid rgba(26,188,156,.3)",color:"#1ABC9C",fontWeight:700,fontSize:13,textDecoration:"none"}}>
+                    百度地图搜索 →
+                  </a>
+                  <a href={`https://uri.amap.com/search?keywords=${encodeURIComponent("公园")}&center=${activeCoords.lon},${activeCoords.lat}&zoom=15`} target="_blank" rel="noreferrer"
+                    style={{flex:1,display:"block",textAlign:"center",padding:"10px",borderRadius:12,background:"rgba(26,188,156,.08)",border:"1px solid rgba(26,188,156,.25)",color:"#1ABC9C",fontWeight:700,fontSize:13,textDecoration:"none"}}>
+                    高德地图搜索 →
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
