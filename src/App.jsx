@@ -153,8 +153,7 @@ async function parseImageWithAI(file) {
     {type:"text",text:`分析这张测测APP截图，提取所有幸运元素。只返回JSON，无其他文字：
 {"mood":"运势描述","advice":"建议","avoid":"避免","luckyColor":"颜色名","luckyColorHex":"#hex","luckyJewelry":"配饰名","luckyJewelryHex":"#hex","luckyTime":"17-19点","luckyDirection":"正西","luckyNumbers":"1,2","luckyFood":"食物","luckyItem":"随身物","luckyFlower":"花名"}`}
   ]}]);
-  const clean = text.replace(/^```[a-z]*
-?/i,"").replace(/```$/,"").trim();
+  const clean = text.replace(/^```[a-z]*\n?/i,"").replace(/```$/,"").trim();
   return JSON.parse(clean);
 }
 
@@ -783,7 +782,7 @@ export default function App() {
             {!poisLoading&&foodPOIs&&foodPOIs.length===0&&(
               <div>
                 <div style={{fontSize:13,color:"#95A5A6",marginBottom:10}}>附近暂未找到餐厅数据，可在地图上直接搜索：</div>
-                <div style={{display:"flex",gap:8",flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   <a href={`https://map.baidu.com/search/${encodeURIComponent(data.luckyFood+"餐厅")}/@${activeCoords.lon},${activeCoords.lat},15z`} target="_blank" rel="noreferrer"
                     style={{flex:1,display:"block",textAlign:"center",padding:"10px",borderRadius:12,background:"rgba(255,107,53,.12)",border:"1px solid rgba(255,107,53,.3)",color:"#FF6B35",fontWeight:700,fontSize:13,textDecoration:"none"}}>
                     百度地图搜索 →
